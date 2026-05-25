@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>我的电脑之家</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark"></span>
+          <div>
+            <h1>我的电脑之家</h1>
+            <p>应用是物品，文件夹是箱子。</p>
+          </div>
+        </div>
+
+        <div class="toolbar" aria-label="快捷操作">
+          <button id="saveButton" type="button" title="保存布局">保存</button>
+          <button id="manageLinksButton" type="button" title="管理应用链接">链接</button>
+          <button id="refreshButton" type="button" title="重新扫描">刷新</button>
+          <button id="exitButton" type="button" title="退出到普通桌面">退出</button>
+        </div>
+
+        <label class="search">
+          <span>搜索</span>
+          <input id="searchInput" type="search" placeholder="应用、文件、文件夹">
+        </label>
+
+        <section class="panel">
+          <div class="panel-title">附近物品</div>
+          <div id="nearbyList" class="nearby-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title">当前选择</div>
+          <div id="selection" class="selection">移动到物品旁边，或直接点击房间里的物品。</div>
+          <div class="selection-actions">
+            <button id="removeSelectedButton" type="button" disabled>移除链接</button>
+          </div>
+        </section>
+      </aside>
+
+      <section class="stage-wrap">
+        <div class="statusbar">
+          <span id="statusText">正在进入你的电脑之家...</span>
+          <span>WASD 移动，方向键 / 鼠标转向，Enter 打开</span>
+        </div>
+        <div id="stage" class="stage" tabindex="0" aria-label="游戏化电脑房间">
+          <div class="cinematic-grade" aria-hidden="true"></div>
+          <div class="crosshair" aria-hidden="true"></div>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="folderDialog" class="folder-dialog">
+      <div class="dialog-head">
+        <div>
+          <p id="folderPath" class="folder-path"></p>
+          <h2 id="folderTitle">箱子</h2>
+        </div>
+        <button id="closeFolderButton" type="button" class="icon-button" title="关闭">×</button>
+      </div>
+      <div id="folderBreadcrumbs" class="breadcrumbs"></div>
+      <div id="folderGrid" class="folder-grid"></div>
+    </dialog>
+
+    <dialog id="linksDialog" class="links-dialog">
+      <div class="dialog-head">
+        <div>
+          <p class="folder-path">勾选应用，它就会自动出现在房间里。</p>
+          <h2>应用链接</h2>
+        </div>
+        <button id="closeLinksButton" type="button" class="icon-button" title="关闭">×</button>
+      </div>
+      <div class="links-tools">
+        <button id="selectAllAppsButton" type="button">全选</button>
+        <button id="clearAppsButton" type="button">清空</button>
+        <button id="applyLinksButton" type="button">应用到房间</button>
+      </div>
+      <div id="linksList" class="links-list"></div>
+    </dialog>
+
+    <dialog id="settingsDialog" class="settings-dialog">
+      <div class="dialog-head">
+        <div>
+          <p class="folder-path">游戏设置</p>
+          <h2>暂停</h2>
+        </div>
+        <button id="closeSettingsButton" type="button" class="icon-button" title="关闭">×</button>
+      </div>
+      <div class="settings-grid">
+        <button id="resumeButton" type="button">继续</button>
+        <button id="settingsLinksButton" type="button">添加 / 删除应用</button>
+        <button id="settingsExitButton" type="button">退出</button>
+      </div>
+      <div class="rename-panel">
+        <label>
+          <span>当前应用显示名</span>
+          <input id="renameInput" type="text" placeholder="先看向或选择一个应用">
+        </label>
+        <button id="renameButton" type="button">重命名</button>
+        <p>只改变游戏里的名字，不改变电脑里的真实应用名。</p>
+      </div>
+      <div class="folder-roots-panel">
+        <label>
+          <span>文件夹入口</span>
+          <input id="folderRootInput" type="text" placeholder="/Users/你/Projects">
+        </label>
+        <div class="folder-roots-actions">
+          <button id="addFolderRootButton" type="button">添加文件夹</button>
+          <button id="refreshFolderRootsButton" type="button">重新扫描</button>
+        </div>
+        <div id="folderRootsList" class="folder-roots-list"></div>
+      </div>
+      <div id="settingsSidebarMount" class="settings-sidebar-mount"></div>
+    </dialog>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
