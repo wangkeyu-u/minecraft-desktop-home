@@ -1,19 +1,19 @@
 import AppKit
 import WebKit
 
-// macOS 原生壳：负责窗口生命周期、启动本地服务，以及把 Web 前端接到系统能力上。
+// Hosts the local WebGL app inside a native macOS process and owns OS-level side effects.
 final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScriptMessageHandler {
     private var window: NSWindow?
     private var webView: WKWebView?
     private var serverProcess: Process?
-    // 保存 open -W 进程引用，避免外部软件还没关闭时 Process 被释放。
+    // Strong references keep `open -W` processes alive until their termination handlers run.
     private var openProcesses: [Process] = []
     private var cursorIsHidden = false
     private let projectPath = "/Users/wangkeyu/Documents/我的世界"
     private let appURL = URL(string: "http://localhost:4173/")!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // 先启动 Node 本地服务，再创建 WebView 窗口，最后等服务可用后加载页面。
+        // The WebView loads only after the local server is reachable to avoid a transient error page.
         startServer()
         createWindow()
         loadAppWhenReady()
@@ -24,13 +24,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        // 退出前恢复系统鼠标，并关闭由桌面壳启动的本地服务。
+        // Cursor visibility is process-global in AppKit, so restore it before shutdown.
         showCursorIfNeeded()
         serverProcess?.terminate()
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        // 前端通过 window.webkit.messageHandlers 发送消息到这里，实现 JS -> Native 桥接。
+        // Narrow JS -> native bridge: only expose actions that cannot be implemented safely in WebView.
         if message.name == "nativeQuit" {
             NSApp.terminate(nil)
         } else if message.name == "nativeOpen" {
@@ -57,7 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     private func startServer() {
-        // 桌面应用内置一个本地 Web 服务，用来提供静态页面和文件系统 API。
+        // Keep filesystem access in the local Node service instead of granting it to WebView code.
         let process = Process()
         if let nodePath = resolveNodeExecutable() {
             process.executableURL = URL(fileURLWithPath: nodePath)
@@ -84,7 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     private func resolveNodeExecutable() -> String? {
-        // 优先使用 Codex 打包的 Node，其次回退到系统常见安装路径。
+        // Development build fallback order; a production bundle should vendor a stable runtime.
         let candidates = [
             "/Users/wangkeyu/Desktop/Codex.app/Contents/Resources/node",
             "/opt/homebrew/bin/node",
@@ -97,7 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func createWindow() {
         let configuration = WKWebViewConfiguration()
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
-        // 注册前端可调用的原生能力：退出、鼠标显示隐藏、打开外部对象。
+        // Message names are part of the frontend/native contract; keep them stable across releases.
         configuration.userContentController.add(self, name: "nativeQuit")
         configuration.userContentController.add(self, name: "nativeCursor")
         configuration.userContentController.add(self, name: "nativeOpen")
@@ -123,7 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-            // 延迟进入全屏，让窗口先完成创建和激活，减少启动时的闪烁。
+            // Enter fullscreen after activation so AppKit has a concrete window to transition.
             if !window.styleMask.contains(.fullScreen) {
                 window.toggleFullScreen(nil)
             }
@@ -131,7 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     private func loadAppWhenReady(attempt: Int = 0) {
-        // Node 服务启动需要一点时间，这里轮询 localhost，成功后再加载 WebView。
+        // Poll instead of sleeping for a fixed duration because Node startup varies by machine.
         URLSession.shared.dataTask(with: appURL) { [weak self] _, response, _ in
             let ok = (response as? HTTPURLResponse)?.statusCode == 200
             DispatchQueue.main.async {
@@ -150,7 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func openExternalTarget(_ targetPath: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        // -W 会等待外部应用退出；退出后 terminationHandler 把游戏窗口重新带回前台。
+        // `-W` preserves launcher continuity: when the opened app exits, focus returns here.
         process.arguments = ["-W", targetPath]
         process.terminationHandler = { [weak self, weak process] _ in
             DispatchQueue.main.async {
@@ -171,7 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     private func bringGameToFront() {
         DispatchQueue.main.async { [weak self] in
-            // 用户关闭外部软件后，恢复到游戏窗口，保持“桌面入口”体验连续。
+            // Always restore cursor before reactivation; the Web layer may have hidden it for gameplay.
             self?.showCursorIfNeeded()
             self?.window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)

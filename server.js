@@ -11,7 +11,7 @@ const dataDir = path.join(__dirname, "data");
 const worldPath = path.join(dataDir, "world.json");
 const port = Number(process.env.PORT || 4173);
 
-// 静态资源只服务本项目 public 目录里的前端文件，避免把本机其他文件暴露出来。
+// Keep the static server constrained to the packaged frontend surface.
 const mimeTypes = new Map([
   [".html", "text/html; charset=utf-8"],
   [".css", "text/css; charset=utf-8"],
@@ -43,7 +43,7 @@ async function readBody(req) {
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    // 本地工具也要限制请求体大小，防止异常请求把进程内存打爆。
+    // Bound request size even on localhost; WebView clients are not a trust boundary.
     if (size > 2_000_000) {
       throw createHttpError(413, "Request body is too large.");
     }
@@ -69,7 +69,7 @@ async function exists(targetPath) {
 }
 
 async function listApplications() {
-  // MVP 阶段只扫描 macOS 标准应用目录，数据量可控，也更容易解释权限边界。
+  // Application discovery is intentionally shallow: only first-level .app bundles in known roots.
   const roots = ["/Applications", path.join(os.homedir(), "Applications")];
   const apps = [];
 
@@ -93,7 +93,7 @@ async function listApplications() {
 }
 
 function pickAppAppearance(name) {
-  // 用简单规则把真实应用映射到游戏里的物品外观，后续可以替换成可配置皮肤系统。
+  // Presentation-only heuristic. The returned value must not affect file access decisions.
   const lower = name.toLowerCase();
   if (lower.includes("chrome") || lower.includes("safari") || lower.includes("browser")) return "portal";
   if (lower.includes("music") || lower.includes("spotify")) return "record";
@@ -104,7 +104,7 @@ function pickAppAppearance(name) {
 }
 
 async function scanFolder(folderPath, depth = 0) {
-  // 服务端把真实文件夹转换成前端可直接渲染的树形结构：folder / file / app。
+  // Contract with the renderer: every node is normalized to folder, file, or app.
   const stats = await fs.stat(folderPath);
   const node = {
     id: `folder:${folderPath}`,
@@ -115,7 +115,7 @@ async function scanFolder(folderPath, depth = 0) {
     children: []
   };
 
-  // 限制递归深度，避免一次启动扫描整个用户目录导致卡顿。
+  // Keep bootstrap latency bounded; deeper navigation can be added as lazy loading later.
   if (depth >= 3) return node;
 
   let entries = [];
@@ -131,7 +131,7 @@ async function scanFolder(folderPath, depth = 0) {
       if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
       return a.name.localeCompare(b.name);
     })
-    // 单层限制数量，保证大目录也能快速进入游戏。
+    // Cap fan-out so one large directory cannot dominate startup time or response size.
     .slice(0, 80);
 
   for (const entry of visibleEntries) {
@@ -176,7 +176,7 @@ function pickFileAppearance(name) {
 }
 
 function normalizeFolderPaths(paths) {
-  // 用户输入可能包含空格、重复路径或 ~，统一归一化后再保存和比较。
+  // Canonicalize user-supplied paths before dedupe, persistence, and allowlist checks.
   if (!Array.isArray(paths)) return [];
   return Array.from(new Set(
     paths
@@ -188,7 +188,7 @@ function normalizeFolderPaths(paths) {
 }
 
 function isPathInside(rootPath, targetPath) {
-  // 用 path.relative 判断包含关系，避免简单 startsWith 被相似路径绕过。
+  // Path containment must be segment-aware; prefix checks are unsafe for sibling paths.
   const relative = path.relative(rootPath, targetPath);
   return relative === "" || (relative && !relative.startsWith("..") && !path.isAbsolute(relative));
 }
@@ -202,7 +202,7 @@ async function realPathIfExists(targetPath) {
 }
 
 async function sanitizeCustomFolderPaths(paths) {
-  // 自定义入口只允许用户主目录内真实存在的文件夹，降低误开系统敏感路径的风险。
+  // Persist only existing directories under $HOME. Symlinks are resolved before the check.
   const homePath = await realPathIfExists(os.homedir()) || os.homedir();
   const safePaths = [];
 
@@ -220,7 +220,7 @@ async function sanitizeCustomFolderPaths(paths) {
 }
 
 async function allowedOpenRoots(customFolderPaths = []) {
-  // 打开真实文件前会用这组 allowlist 校验，前端传什么路径都不能直接信任。
+  // Shared allowlist for open operations. Client-provided paths are validated against realpaths.
   const roots = [
     "/Applications",
     path.join(os.homedir(), "Applications"),
@@ -256,7 +256,7 @@ async function getWorld() {
 }
 
 async function saveWorld(world) {
-  // 存档写入前再次清洗自定义路径，保证 data/world.json 里不会留下不可信目录。
+  // Treat persisted world data as untrusted input because it can be edited outside the app.
   const customFolderPaths = await sanitizeCustomFolderPaths(world?.customFolderPaths);
   await fs.mkdir(dataDir, { recursive: true });
   await fs.writeFile(worldPath, JSON.stringify({
@@ -266,7 +266,7 @@ async function saveWorld(world) {
 }
 
 async function validateOpenTarget(targetPath) {
-  // /api/open 是最敏感的接口：必须确认目标存在，且位于扫描过的安全根目录内。
+  // /api/open is the only endpoint that triggers a system action, so it revalidates all input.
   if (!targetPath || typeof targetPath !== "string") {
     throw createHttpError(400, "Missing target path.");
   }
@@ -291,7 +291,7 @@ async function validateOpenTarget(targetPath) {
 
 function openTarget(targetPath) {
   return new Promise((resolve, reject) => {
-    // execFile 不经过 shell，不拼接命令字符串，避免路径里特殊字符造成命令注入。
+    // execFile bypasses the shell, so targetPath is passed as data rather than command text.
     execFile("open", [targetPath], (error) => {
       if (error) {
         reject(error);
@@ -306,7 +306,7 @@ async function handleApi(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
   if (req.method === "GET" && url.pathname === "/api/bootstrap") {
-    // 启动数据一次性返回：应用列表、文件入口和上次存档，前端据此搭建房间。
+    // Bootstrap is intentionally coarse-grained; the scene is rebuilt from one consistent snapshot.
     const world = await getWorld();
     const [apps, fileRoots] = await Promise.all([
       listApplications(),
@@ -339,7 +339,7 @@ async function serveStatic(req, res) {
   const requestedPath = decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname);
   const resolvedPath = path.normalize(path.join(publicDir, requestedPath));
 
-  // 防目录穿越：即使 URL 里带 ../，最终路径也必须留在 public 目录内。
+  // Reject traversal after normalization; encoded ../ segments must not escape publicDir.
   if (!resolvedPath.startsWith(publicDir)) {
     res.writeHead(403);
     res.end("Forbidden");

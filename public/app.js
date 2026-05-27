@@ -37,7 +37,7 @@ const sidebar = document.querySelector(".sidebar");
 const settingsSidebarMount = document.querySelector("#settingsSidebarMount");
 
 const room = { width: 14, height: 10, cell: 1 };
-// 全局运行状态：前端所有交互最终都会落到这里，再通过 saveWorld 持久化。
+// Single source of truth for gameplay, UI selection, and persisted world state.
 const state = {
   apps: [],
   fileRoots: [],
@@ -55,7 +55,7 @@ const state = {
 };
 
 const defaultVisibleAppCount = 13;
-// 应用和文件夹分别使用固定槽位，保证首次进入房间时布局稳定、可预测。
+// Deterministic spawn slots keep new and restored worlds visually stable across rescans.
 const appSlots = createAppSlots();
 
 const folderSlots = [
@@ -96,7 +96,7 @@ const selectionRings = new Map();
 const pickableMeshes = [];
 const labelSprites = new Map();
 
-// Three.js 材质统一复用，避免每帧或每个物体重复创建昂贵的 GPU 资源。
+// Reuse materials/textures across meshes to avoid unnecessary GPU allocations.
 const materials = {
   floor: new THREE.MeshStandardMaterial({
     color: 0x7d5a35,
@@ -343,7 +343,7 @@ function iconFor(item) {
 }
 
 function normalizeWorld(world) {
-  // 老版本存档可能没有新增字段，所以这里做兼容补齐。
+  // Storage schema is versionless; normalize missing fields for backward compatibility.
   return {
     player: world?.player || { x: 6, y: 5 },
     yaw: Number.isFinite(world?.yaw) ? world.yaw : Math.PI,
@@ -366,7 +366,7 @@ function normalizeFolderPaths(paths) {
 }
 
 async function bootstrap() {
-  // 启动流程：读取后端数据 -> 清理失效存档 -> 构建 Three.js 场景 -> 渲染 UI。
+  // Rebuild from a backend snapshot so app links, folders, and placements stay in sync.
   mountSidebarInSettings();
   statusText.textContent = "正在扫描应用和文件夹...";
   const response = await fetch("/api/bootstrap");
@@ -392,7 +392,7 @@ async function bootstrap() {
 }
 
 function cleanupWorldForInstalledApps() {
-  // 如果应用已经卸载，存档里的链接、重命名和位置都要同步清掉。
+  // Drop stale app-owned state when the corresponding .app bundle is no longer discovered.
   const installedAppIds = new Set(state.apps.map((app) => app.id));
   const enabled = getEnabledAppIds();
   const cleanedEnabled = Array.from(enabled).filter((id) => installedAppIds.has(id));
@@ -422,7 +422,7 @@ function setNativeCursorHidden(hidden) {
 }
 
 function buildItems() {
-  // 把后端的 app/fileRoot 数据转换成房间里真正会被渲染和拾取的物品。
+  // Only top-level room items are pickable in 3D; folder children are rendered in the dialog.
   const enabledAppIds = getEnabledAppIds();
   const appItems = state.apps.filter((app) => enabledAppIds.has(app.id)).map((app, index) => ({
     ...app,
@@ -465,7 +465,7 @@ function initThree() {
     return;
   }
 
-  // Three.js 场景只初始化一次；刷新数据时只重建物品组，不重建 renderer。
+  // Renderer lifecycle is independent from scanned data; refreshes replace scene objects only.
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x151d16);
   scene.fog = new THREE.Fog(0x151d16, 7.5, 18);
@@ -810,7 +810,7 @@ function resizeRenderer() {
 }
 
 function renderSceneObjects() {
-  // 每次应用链接或文件夹入口变化时，清空并重建可交互物品。
+  // Object groups are rebuilt atomically so pickable meshes never point at stale item ids.
   objectGroup.clear();
   objectMeshes.clear();
   selectionRings.clear();
@@ -831,7 +831,7 @@ function renderSceneObjects() {
 }
 
 function createItemGroup(item) {
-  // 一个游戏物品由底座、拾取碰撞体、图标、文字标签和可选光源组成。
+  // All child meshes carry the same itemId so raycast hits map back to one domain item.
   const group = new THREE.Group();
   group.userData.itemId = item.id;
 
@@ -888,7 +888,7 @@ function createItemGroup(item) {
 }
 
 function registerPickable(object, itemId) {
-  // Raycaster 只能命中已注册的 mesh/sprite；命中后再通过 itemId 找回业务数据。
+  // Raycaster operates on render primitives; itemId bridges render objects back to app data.
   object.traverse((child) => {
     child.userData.itemId = itemId;
     if (child.isMesh || child.isSprite) {
@@ -1050,7 +1050,7 @@ function updatePlayerPosition() {
 
 function updateCameraFromPlayer() {
   if (!camera) return;
-  // 相机位置跟随角色，朝向做插值，让鼠标转向不会显得生硬。
+  // Persisted yaw/pitch is the target; rendered camera values interpolate for smoother motion.
   const playerWorld = gridToWorld(state.world.player, eyeHeight);
   cameraYaw += angleDelta(cameraYaw, state.world.yaw) * 0.22;
   cameraPitch += (state.world.pitch - cameraPitch) * 0.24;
@@ -1077,7 +1077,7 @@ function getPlanarForward() {
 }
 
 function pickCenteredItem() {
-  // 准星拾取只从屏幕中心发射射线，模拟第一人称游戏里的“看向并点击”。
+  // Crosshair interactions are center-ray only; OS cursor position is ignored during gameplay.
   if (!raycaster || !camera) return null;
   raycaster.setFromCamera(centerPointer, camera);
   const hits = raycaster.intersectObjects(pickableMeshes, false);
@@ -1210,7 +1210,7 @@ function getNearbyItems() {
 }
 
 function renderNearby() {
-  // 搜索时展示匹配结果；没有搜索词时展示角色附近的可交互物品。
+  // Nearby mode and search mode share the same renderer to keep selection semantics identical.
   const term = searchInput.value.trim().toLowerCase();
   const source = term
     ? state.items.filter((item) => item.name.toLowerCase().includes(term) || item.path.toLowerCase().includes(term))
@@ -1247,7 +1247,7 @@ function selectedApp() {
 }
 
 function openSettingsDialog() {
-  // 打开设置时恢复系统鼠标，否则用户无法操作普通表单控件。
+  // Modal UI exits gameplay cursor mode; otherwise native text inputs are effectively unusable.
   if (settingsDialog.open) return;
   state.keys.clear();
   document.body.classList.add("ui-open");
@@ -1389,7 +1389,7 @@ function openSelected() {
 }
 
 async function selectAndOpen(item) {
-  // 文件夹在游戏内打开箱子视图；应用和文件交给系统打开。
+  // Opening is type-dispatched here so folder navigation never reaches the OS open path.
   state.selectedId = item.id;
   renderNearby();
   renderSelection();
@@ -1463,14 +1463,14 @@ async function openChildFile(file) {
 async function openSystemTarget(target) {
   statusText.textContent = `正在打开 ${target.name}...`;
   try {
-    // 桌面壳运行时优先走 Native 桥接，这样能在外部软件关闭后回到游戏窗口。
+    // Native bridge owns macOS focus restoration after external apps close.
     if (window.webkit?.messageHandlers?.nativeOpen) {
       window.webkit.messageHandlers.nativeOpen.postMessage(target.path);
       statusText.textContent = `已交给系统打开：${target.name}`;
       return;
     }
 
-    // 浏览器调试模式没有 Native 桥接，回退到本地 Node API。
+    // Browser-only development mode uses the local API, which still validates the path server-side.
     const response = await fetch("/api/open", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1487,7 +1487,7 @@ async function openSystemTarget(target) {
 }
 
 function openLinksDialog() {
-  // 应用链接管理保留在设置弹窗里，避免常驻侧栏破坏沉浸式游戏画面。
+  // Link management is modal state; gameplay controls remain disabled until the dialog closes.
   document.body.classList.add("ui-open");
   setNativeCursorHidden(false);
   renderLinksDialog();
@@ -1584,7 +1584,7 @@ function isCustomFolderRoot(folder) {
 }
 
 function renderFolderRootsPanel() {
-  // 自定义文件夹入口和默认入口一起展示；默认入口不可移除。
+  // Default roots are system-defined; only user-added roots can be removed from this panel.
   if (!folderRootsList) return;
   const customPaths = normalizeFolderPaths(state.world.customFolderPaths);
   folderRootsList.innerHTML = "";
@@ -1627,7 +1627,7 @@ function renderFolderRootsPanel() {
 }
 
 async function addFolderRoot() {
-  // 先保存路径到存档，再重新 bootstrap，让后端按最新 allowlist 扫描目录。
+  // Save before re-bootstrap so the server scans with the same allowlist it will persist.
   const folderPath = folderRootInput.value.trim();
   if (!folderPath) return;
 
@@ -1657,7 +1657,7 @@ async function refreshWorldData(message = "已重新扫描文件夹入口。") {
 }
 
 function createWorldSnapshot() {
-  // 统一生成可持久化快照，手动保存、自动保存和 beforeunload 都共用它。
+  // Snapshot shape is the persistence contract shared by explicit save, autosave, and unload.
   const placements = {};
   for (const item of state.items) {
     placements[item.id] = item.position;
@@ -1675,7 +1675,7 @@ function createWorldSnapshot() {
 }
 
 function scheduleAutoSave() {
-  // 高频移动和转向会不断触发保存，这里做简单防抖减少磁盘写入。
+  // Movement can emit many changes per second; debounce to reduce disk churn.
   clearTimeout(state.saveTimer);
   state.saveTimer = setTimeout(() => {
     saveWorld({ silent: true });
@@ -1724,7 +1724,7 @@ function exitToDesktop() {
 }
 
 document.addEventListener("keydown", (event) => {
-  // 键盘事件集中处理：Esc 打开设置，WASD/方向键控制第一人称移动。
+  // Ignore gameplay shortcuts while dialogs or text fields own focus.
   const key = event.key.toLowerCase();
 
   if (event.key === "Escape") {
