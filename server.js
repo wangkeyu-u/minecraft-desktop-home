@@ -11,6 +11,7 @@ const dataDir = path.join(__dirname, "data");
 const worldPath = path.join(dataDir, "world.json");
 const port = Number(process.env.PORT || 4173);
 
+// 静态资源只服务本项目 public 目录里的前端文件，避免把本机其他文件暴露出来。
 const mimeTypes = new Map([
   [".html", "text/html; charset=utf-8"],
   [".css", "text/css; charset=utf-8"],
@@ -39,11 +40,23 @@ function sendJson(res, status, body) {
 
 async function readBody(req) {
   const chunks = [];
+  let size = 0;
   for await (const chunk of req) {
+    size += chunk.length;
+    // 本地工具也要限制请求体大小，防止异常请求把进程内存打爆。
+    if (size > 2_000_000) {
+      throw createHttpError(413, "Request body is too large.");
+    }
     chunks.push(chunk);
   }
   if (!chunks.length) return {};
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+function createHttpError(statusCode, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
 }
 
 async function exists(targetPath) {
@@ -56,6 +69,7 @@ async function exists(targetPath) {
 }
 
 async function listApplications() {
+  // MVP 阶段只扫描 macOS 标准应用目录，数据量可控，也更容易解释权限边界。
   const roots = ["/Applications", path.join(os.homedir(), "Applications")];
   const apps = [];
 
@@ -79,6 +93,7 @@ async function listApplications() {
 }
 
 function pickAppAppearance(name) {
+  // 用简单规则把真实应用映射到游戏里的物品外观，后续可以替换成可配置皮肤系统。
   const lower = name.toLowerCase();
   if (lower.includes("chrome") || lower.includes("safari") || lower.includes("browser")) return "portal";
   if (lower.includes("music") || lower.includes("spotify")) return "record";
@@ -89,6 +104,7 @@ function pickAppAppearance(name) {
 }
 
 async function scanFolder(folderPath, depth = 0) {
+  // 服务端把真实文件夹转换成前端可直接渲染的树形结构：folder / file / app。
   const stats = await fs.stat(folderPath);
   const node = {
     id: `folder:${folderPath}`,
@@ -99,6 +115,7 @@ async function scanFolder(folderPath, depth = 0) {
     children: []
   };
 
+  // 限制递归深度，避免一次启动扫描整个用户目录导致卡顿。
   if (depth >= 3) return node;
 
   let entries = [];
@@ -114,6 +131,7 @@ async function scanFolder(folderPath, depth = 0) {
       if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
       return a.name.localeCompare(b.name);
     })
+    // 单层限制数量，保证大目录也能快速进入游戏。
     .slice(0, 80);
 
   for (const entry of visibleEntries) {
@@ -158,6 +176,7 @@ function pickFileAppearance(name) {
 }
 
 function normalizeFolderPaths(paths) {
+  // 用户输入可能包含空格、重复路径或 ~，统一归一化后再保存和比较。
   if (!Array.isArray(paths)) return [];
   return Array.from(new Set(
     paths
@@ -168,9 +187,55 @@ function normalizeFolderPaths(paths) {
   ));
 }
 
+function isPathInside(rootPath, targetPath) {
+  // 用 path.relative 判断包含关系，避免简单 startsWith 被相似路径绕过。
+  const relative = path.relative(rootPath, targetPath);
+  return relative === "" || (relative && !relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+async function realPathIfExists(targetPath) {
+  try {
+    return await fs.realpath(targetPath);
+  } catch {
+    return null;
+  }
+}
+
+async function sanitizeCustomFolderPaths(paths) {
+  // 自定义入口只允许用户主目录内真实存在的文件夹，降低误开系统敏感路径的风险。
+  const homePath = await realPathIfExists(os.homedir()) || os.homedir();
+  const safePaths = [];
+
+  for (const folderPath of normalizeFolderPaths(paths)) {
+    const realFolderPath = await realPathIfExists(folderPath);
+    if (!realFolderPath || !isPathInside(homePath, realFolderPath)) continue;
+
+    const stats = await fs.stat(realFolderPath).catch(() => null);
+    if (stats?.isDirectory()) {
+      safePaths.push(realFolderPath);
+    }
+  }
+
+  return Array.from(new Set(safePaths));
+}
+
+async function allowedOpenRoots(customFolderPaths = []) {
+  // 打开真实文件前会用这组 allowlist 校验，前端传什么路径都不能直接信任。
+  const roots = [
+    "/Applications",
+    path.join(os.homedir(), "Applications"),
+    ...defaultWatchedFolders,
+    ...normalizeFolderPaths(customFolderPaths)
+  ];
+
+  const realRoots = await Promise.all(roots.map(realPathIfExists));
+  return realRoots.filter(Boolean);
+}
+
 async function listFileRoots(customFolderPaths = []) {
   const roots = [];
-  for (const folderPath of normalizeFolderPaths([...defaultWatchedFolders, ...customFolderPaths])) {
+  const safeCustomFolderPaths = await sanitizeCustomFolderPaths(customFolderPaths);
+  for (const folderPath of normalizeFolderPaths([...defaultWatchedFolders, ...safeCustomFolderPaths])) {
     if (await exists(folderPath)) {
       roots.push(await scanFolder(folderPath));
     }
@@ -191,15 +256,42 @@ async function getWorld() {
 }
 
 async function saveWorld(world) {
+  // 存档写入前再次清洗自定义路径，保证 data/world.json 里不会留下不可信目录。
+  const customFolderPaths = await sanitizeCustomFolderPaths(world?.customFolderPaths);
   await fs.mkdir(dataDir, { recursive: true });
   await fs.writeFile(worldPath, JSON.stringify({
     ...world,
-    customFolderPaths: normalizeFolderPaths(world.customFolderPaths)
+    customFolderPaths
   }, null, 2));
+}
+
+async function validateOpenTarget(targetPath) {
+  // /api/open 是最敏感的接口：必须确认目标存在，且位于扫描过的安全根目录内。
+  if (!targetPath || typeof targetPath !== "string") {
+    throw createHttpError(400, "Missing target path.");
+  }
+
+  const world = await getWorld();
+  const targetRealPath = await realPathIfExists(
+    path.resolve(targetPath.replace(/^~(?=$|\/)/, os.homedir()))
+  );
+
+  if (!targetRealPath) {
+    throw createHttpError(404, "Target no longer exists.");
+  }
+
+  const roots = await allowedOpenRoots(world.customFolderPaths);
+  const allowed = roots.some((rootPath) => isPathInside(rootPath, targetRealPath));
+  if (!allowed) {
+    throw createHttpError(403, "Target is outside allowed scanned folders.");
+  }
+
+  return targetRealPath;
 }
 
 function openTarget(targetPath) {
   return new Promise((resolve, reject) => {
+    // execFile 不经过 shell，不拼接命令字符串，避免路径里特殊字符造成命令注入。
     execFile("open", [targetPath], (error) => {
       if (error) {
         reject(error);
@@ -214,6 +306,7 @@ async function handleApi(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
   if (req.method === "GET" && url.pathname === "/api/bootstrap") {
+    // 启动数据一次性返回：应用列表、文件入口和上次存档，前端据此搭建房间。
     const world = await getWorld();
     const [apps, fileRoots] = await Promise.all([
       listApplications(),
@@ -225,11 +318,8 @@ async function handleApi(req, res) {
 
   if (req.method === "POST" && url.pathname === "/api/open") {
     const body = await readBody(req);
-    if (!body.path || typeof body.path !== "string") {
-      sendJson(res, 400, { error: "Missing target path." });
-      return;
-    }
-    await openTarget(body.path);
+    const targetPath = await validateOpenTarget(body.path);
+    await openTarget(targetPath);
     sendJson(res, 200, { ok: true });
     return;
   }
@@ -249,6 +339,7 @@ async function serveStatic(req, res) {
   const requestedPath = decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname);
   const resolvedPath = path.normalize(path.join(publicDir, requestedPath));
 
+  // 防目录穿越：即使 URL 里带 ../，最终路径也必须留在 public 目录内。
   if (!resolvedPath.startsWith(publicDir)) {
     res.writeHead(403);
     res.end("Forbidden");
@@ -275,7 +366,7 @@ const server = http.createServer(async (req, res) => {
     }
     await serveStatic(req, res);
   } catch (error) {
-    sendJson(res, 500, { error: error.message });
+    sendJson(res, error.statusCode || 500, { error: error.message });
   }
 });
 
