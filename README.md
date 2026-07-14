@@ -1,84 +1,119 @@
-# 我的电脑之家
+# 我的电脑之家 / Desktop Home
 
-一个把电脑应用和文件夹映射成 3D 游戏房间物品的本地 MVP 原型。
-# 职责分工：
-Wang Keyu 项目组织者
-Wu Jiaxuan 项目成员 职责贡献：实现游戏内启动真实应用和文件的能力，调用 macOS 系统能力打开外部软件，并通过 Swift + WebKit 原生壳保持主程序窗口常驻。
-Gong Yongjia 项目成员 职责贡献：设计本地存档机制，持久化角色位置、视角、应用链接、显示名、自定义文件夹入口和物品布局，支持刷新扫描后恢复上次使用状态。
+> 把电脑应用和文件夹映射成 3D 游戏房间物品的本地 macOS 启动器 —— 第一人称探索，准星拾取，游戏内打开真实文件。
+>
+> A macOS 3D gamified desktop launcher that maps apps and folders into game-room objects — first-person exploration, crosshair pickup, open real files from inside the game.
 
+[![Platform](https://img.shields.io/badge/platform-macOS-blue)](https://www.apple.com/macos/)
+[![Three.js](https://img.shields.io/badge/Three.js-3D%20Engine-black)](https://threejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-Backend-339933)](https://nodejs.org/)
+[![Type](https://img.shields.io/badge/type-MVP%20Prototype-orange)]()
 
-## 安全与边界
+---
 
-- 后端 `/api/open` 不再接受任意路径打开，只允许打开扫描范围内的真实对象。
-- 自定义文件夹入口会做路径归一化、去重、存在性检查，并限制在用户主目录下。
-- 打开文件失败时前端会展示后端返回的错误，便于定位路径权限和文件变更问题。
+## 简介 / Overview
 
-## 项目定位
+这是一个 macOS 上的 3D 游戏化桌面启动器。用 Three.js 构建第一人称 3D 房间，把应用映射成物品、文件夹映射成箱子；后端用 Node.js 扫描本地应用和指定目录；前端支持 WASD 移动、鼠标视角、准星拾取和游戏内打开真实文件。最后用 Swift + WebKit 封装成轻量 macOS 原生壳。
 
-> 这个项目是一个 macOS 上的 3D 游戏化桌面启动器。我用 Three.js 构建第一人称 3D 房间，把应用映射成物品、文件夹映射成箱子，后端用 Node.js 扫描本地应用和指定目录，前端支持 WASD 移动、鼠标视角、准星拾取和游戏内打开真实文件。最后用 Swift + WebKit 封装成轻量 macOS 原生壳。
+A 3D gamified desktop launcher for macOS. Three.js renders a first-person 3D room where apps become objects and folders become chests. A Node.js backend scans local apps and directories. The frontend supports WASD movement, mouse look, crosshair pickup, and opening real files from inside the game. A Swift + WebKit wrapper packages it as a lightweight native macOS app.
 
-安全设计：
+---
 
-- 本地扫描只扫默认目录和用户显式添加的目录。
-- 打开文件前会把路径转换成真实路径，并校验是否位于 allowlist 根目录内。
-- 后端用 `execFile("open", [targetPath])`，避免拼接 shell 命令导致注入风险。
+## 团队 / Team
 
-## 运行
+| 成员 / Member | 角色 / Role | 职责 / Responsibilities |
+|---|---|---|
+| Wang Keyu | 项目组织者 / Project Lead | 项目组织与整体架构 / Project organization & architecture |
+| Wu Jiaxuan | 项目成员 / Member | 游戏内启动真实应用、调用 macOS 系统能力、Swift + WebKit 原生壳 / In-game app launching, macOS system integration, Swift + WebKit native shell |
+| Gong Yongjia | 项目成员 / Member | 本地存档机制、角色位置/视角/链接/布局持久化 / Local save system, position/view/link/layout persistence |
+
+---
+
+## 核心功能 / Key Features
+
+- 🎮 **第一人称 3D 房间 / First-person 3D room** — WASD 移动、鼠标 360° 转向、准星拾取 / WASD movement, 360° mouse look, crosshair pickup
+- 📦 **应用 → 3D 物品 / Apps → 3D objects** — 扫描 `/Applications`、`~/Applications` 中的 macOS 应用并映射为房间物品 / Scans macOS apps and maps them to room objects
+- 📁 **文件夹 → 3D 箱子 / Folders → 3D chests** — 支持嵌套进入文件夹箱子 / Nestable folder chests
+- 🖱️ **游戏内打开真实文件 / Open real files in-game** — 准星对准物品点击，调用系统 `open` 打开真实应用或文件 / Aim crosshair at object, click to open the real app/file via system `open`
+- 🏠 **原生 macOS 应用 / Native macOS app** — Swift + WebKit 轻量壳（~128 KB），保持窗口常驻 / Swift + WebKit lightweight shell (~128 KB), persistent window
+- 💾 **自动存档 / Auto-save** — 角色位置、视角、物品布局保存在 `data/world.json` / Position, view, and layout saved to `data/world.json`
+- 🔍 **搜索 / Search** — 搜索应用、文件和文件夹 / Search apps, files, and folders
+- 🎨 **程序化场景 / Procedural scene** — 木地板、墙板、天花梁、窗光、尘粒、暗角 / Wood floor, wall panels, ceiling beams, window light, dust particles, vignette
+
+---
+
+## 安全设计 / Security Design
+
+- 后端 `/api/open` 只允许打开扫描范围内的真实对象，不接受任意路径 / Backend `/api/open` only opens real objects within scan scope, rejects arbitrary paths
+- 自定义文件夹入口做路径归一化、去重、存在性检查，限制在用户主目录下 / Custom folder entries are normalized, deduplicated, existence-checked, and restricted to user home directory
+- 使用 `execFile("open", [targetPath])` 而非拼接 shell 命令，避免注入风险 / Uses `execFile` instead of shell concatenation to prevent injection
+- 打开文件失败时前端展示后端返回的错误 / Frontend shows backend errors on open failure
+
+---
+
+## 快速开始 / Quick Start
+
+### 方式一：开发服务器 / Option 1: Dev server
 
 ```bash
 node server.js
 ```
 
-打开：
+打开 / Open：`http://localhost:4173`
 
-```text
-http://localhost:4173
+### 方式二：桌面应用 / Option 2: Desktop app
+
+直接打开桌面上的 macOS 应用 / Double-click the desktop app：
+
 ```
-
-也可以直接打开桌面上的 macOS 应用：
-
-```text
 ~/Desktop/我的电脑之家.app
 ```
 
-重新打包应用：
+重新打包 / Rebuild the app：
 
 ```bash
 ./build-macos-app.sh
 ```
 
-## 第一版能力
+---
 
-- 扫描 `/Applications`、`~/Applications` 中的 macOS 应用。
-- 扫描 `~/Desktop`、`~/Documents`、`~/Downloads` 三个文件入口。
-- 使用本地 Three.js 渲染 3D 房间、墙体、地板和物品，断网也能运行。
-- 使用第一人称视角，点击空处可进入鼠标视角。
-- 使用程序化木地板、墙板、天花梁、窗光、尘粒、暗角和物品高亮提升画面质感。
-- 将应用显示成房间里的 3D 物品。
-- 将文件夹显示成 3D 箱子，并支持嵌套进入。
-- 支持在游戏内管理应用链接，勾选添加到房间，取消勾选从房间移除。
-- 点击应用或文件后调用系统 `open` 打开真实对象。
-- 桌面应用中打开外部软件后会保持游戏运行；外部软件关闭时会自动回到游戏窗口。
-- 支持 WASD 移动，方向键、Q/E 或鼠标转向。
-- 支持按住 WASD 连续移动，鼠标控制第一人称视角 360 度转向。
-- 主界面隐藏管理栏，按 Esc 才打开暂停/设置面板。
-- 鼠标或触摸板在游戏画面上移动即可控制视角，不需要按住拖动。
-- 游戏画面填满窗口，不再保留左侧栏或底部提示。
-- 支持屏幕中央准星，鼠标左键按准星指向打开应用或箱子。
-- 准星就是游戏内鼠标，左键只按准星中心判定，不按系统鼠标位置判定。
-- 游戏态会隐藏系统鼠标；Esc 设置菜单和文件/链接弹窗会恢复系统鼠标。
-- 支持按 Esc 打开设置菜单，在里面继续、退出、添加/删除应用链接、重命名游戏内应用显示名。
-- 存档保存在本地 `data/world.json`，移动、转向、链接和重命名会自动保存。
-- 打开外部应用不会关闭游戏；除非在设置里选择退出游戏，桌面应用会一直保持运行。
-- 启动时会清理本地存档中不存在、未启用的应用链接。
-- 桌面 `.app` 是轻量原生壳，约 128 KB；资源和存档留在项目本地目录，减少应用体积。
-- 支持搜索应用、文件和文件夹。
-- 支持在设置里添加和移除自定义文件夹入口。
-- 支持保存角色位置和物品布局到 `data/world.json`。
+## 文件结构 / File Structure
 
-## 当前边界
+```
+minecraft-desktop-home/
+├── server.js               # Node.js 后端：扫描应用/目录、打开文件 / Backend: scan & open
+├── public/                 # 前端静态资源 / Frontend static assets
+├── native/                 # Swift + WebKit 原生壳源码 / Swift + WebKit shell source
+├── build-macos-app.sh      # macOS 应用打包脚本 / macOS app build script
+├── data/                   # 本地存档 world.json / Local save data
+├── package.json
+├── 需求文档.md              # 产品需求文档 / Product requirements doc
+└── README.md
+```
 
-- 这是 WebGL 3D 原型，还不是完整建造游戏。
-- 现在只读取和打开文件，不在游戏内删除、移动或重命名真实文件。
-- 文件夹扫描深度限制为 3 层，单层最多显示 80 个项目。
-- 当前主要面向 macOS，因为打开真实对象使用的是系统 `open` 命令。
+---
+
+## 当前边界 / Current Limitations
+
+- 这是 WebGL 3D 原型，还不是完整建造游戏 / This is a WebGL 3D prototype, not a full building game
+- 只读取和打开文件，不在游戏内删除、移动或重命名真实文件 / Only reads/opens files; no in-game delete/move/rename of real files
+- 文件夹扫描深度限制 3 层，单层最多 80 个项目 / Folder scan depth limited to 3 levels, max 80 items per level
+- 主要面向 macOS（打开真实对象使用系统 `open` 命令）/ macOS-focused (uses system `open` command)
+
+---
+
+## 技术栈 / Tech Stack
+
+| 层 / Layer | 技术 / Technology |
+|---|---|
+| 3D 渲染 / 3D Rendering | Three.js（本地引入，断网可用 / local import, works offline） |
+| 后端 / Backend | Node.js |
+| 原生壳 / Native Shell | Swift + WebKit |
+| 存档 / Save Format | JSON (`data/world.json`) |
+| 平台 / Platform | macOS |
+
+---
+
+## 许可证 / License
+
+MIT
