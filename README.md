@@ -87,7 +87,6 @@ minecraft-desktop-home/
 ├── build-macos-app.sh      # macOS 应用打包脚本 / macOS app build script
 ├── data/                   # 本地存档 world.json / Local save data
 ├── package.json
-├── 需求文档.md              # 产品需求文档 / Product requirements doc
 └── README.md
 ```
 
